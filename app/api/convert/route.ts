@@ -6,11 +6,8 @@ import fs from "fs/promises";
 import crypto from "crypto";
 import { createReadStream } from "fs";
 
-const YT_DLP =
-  "C:\\Users\\jakel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe\\yt-dlp.exe";
-
-const FFMPEG =
-  "C:\\Users\\jakel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin";
+const YT_DLP = "yt-dlp";
+const FFMPEG = "ffmpeg";
 
 function cleanFileName(name: string) {
   return name
