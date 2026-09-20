@@ -37,7 +37,7 @@ export async function POST(request: Request) {
         [
           "--no-playlist",
           "--extractor-args",
-          "youtube:player_client=android",
+          "youtube:player_client=mweb",
           "--print",
           "%(uploader)s|||%(title)s",
           url,
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
         [
           "--no-playlist",
           "--extractor-args",
-          "youtube:player_client=android",
+          "youtube:player_client=mweb",
           "-f",
           "bestvideo+bestaudio/best",
           "--merge-output-format",
