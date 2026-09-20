@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { spawn, execFile } from "child_process";
+import { execFile } from "child_process";
 import path from "path";
+import os from "os";
 import fs from "fs/promises";
+import crypto from "crypto";
+import { createReadStream } from "fs";
 
 const YT_DLP =
   "C:\\Users\\jakel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe\\yt-dlp.exe";
@@ -22,16 +25,25 @@ export async function POST(request: Request) {
     const url = body.url;
 
     if (!url) {
-      return NextResponse.json({ message: "URL is required" }, { status: 400 });
+      return NextResponse.json(
+        { message: "URL is required" },
+        { status: 400 }
+      );
     }
 
+    // Get title + uploader
     const info = await new Promise<{
       title: string;
       uploader: string;
     }>((resolve, reject) => {
       execFile(
         YT_DLP,
-        ["--no-playlist", "--print", "%(uploader)s|||%(title)s", url],
+        [
+          "--no-playlist",
+          "--print",
+          "%(uploader)s|||%(title)s",
+          url,
+        ],
         { timeout: 30000 },
         (error, stdout, stderr) => {
           if (error) {
@@ -45,7 +57,7 @@ export async function POST(request: Request) {
             uploader: uploader || "Unknown Artist",
             title: title || "Unknown Title",
           });
-        },
+        }
       );
     });
 
@@ -54,99 +66,103 @@ export async function POST(request: Request) {
 
     const fileName = `${artist} - ${title}.mp4`;
 
-    const downloadDir = path.join(process.cwd(), "public", "downloads");
+    // Temporary directory
+    const tempDir = path.join(os.tmpdir(), "youtube-to-mp4");
 
-    await fs.mkdir(downloadDir, { recursive: true });
+    await fs.mkdir(tempDir, { recursive: true });
 
-    const outputPath = path.join(downloadDir, fileName);
+    const tempName = `${crypto.randomUUID()}.mp4`;
+    const tempPath = path.join(tempDir, tempName);
 
-    const args = [
-      "--no-playlist",
-      "-f",
-      "bestvideo+bestaudio/best",
-      "--merge-output-format",
-      "mp4",
-      "--ffmpeg-location",
-      FFMPEG,
-      "--newline",
-      "--progress",
-      "-o",
-      outputPath,
-      url,
-    ];
+    // Download + merge into temporary file
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        YT_DLP,
+        [
+          "--no-playlist",
+          "-f",
+          "bestvideo+bestaudio/best",
+          "--merge-output-format",
+          "mp4",
+          "--ffmpeg-location",
+          FFMPEG,
+          "--newline",
+          "--progress",
+          "-o",
+          tempPath,
+          url,
+        ],
+        { timeout: 300000 },
+        (error, stdout, stderr) => {
+          console.log(stdout);
 
-    const encoder = new TextEncoder();
+          if (error) {
+            console.error(stderr);
+            reject(error);
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+
+    // Stream temporary file to browser
+    const file = await fs.open(tempPath, "r");
+    const stat = await file.stat();
+
+    const nodeStream = createReadStream(tempPath);
 
     const stream = new ReadableStream({
       start(controller) {
-        const process = spawn(YT_DLP, args);
+        nodeStream.on("data", (chunk) => {
+          controller.enqueue(chunk);
+        });
 
-        process.stdout.on("data", (data: Buffer) => {
-          const output = data.toString();
+        nodeStream.on("end", async () => {
+          controller.close();
 
-          console.log("YT-DLP:", JSON.stringify(output));
-
-          const matches = output.match(/(\d+(?:\.\d+)?)%/g);
-
-          if (matches) {
-            const lastMatch = matches[matches.length - 1];
-            const progress = parseFloat(lastMatch);
-
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "progress",
-                  progress,
-                }) + "\n",
-              ),
-            );
+          try {
+            await fs.unlink(tempPath);
+          } catch {
+            // Ignore cleanup errors
           }
         });
 
-        process.stderr.on("data", (data: Buffer) => {
-          console.error(data.toString());
-        });
+        nodeStream.on("error", async (error) => {
+          controller.error(error);
 
-        process.on("close", (code) => {
-          if (code === 0) {
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "complete",
-                  downloadUrl: `/downloads/${fileName}`,
-                }) + "\n",
-              ),
-            );
-          } else {
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "error",
-                  message: "Download failed",
-                }) + "\n",
-              ),
-            );
+          try {
+            await fs.unlink(tempPath);
+          } catch {
+            // Ignore cleanup errors
           }
-
-          controller.close();
         });
+      },
 
-        process.on("error", (error) => {
-          console.error(error);
-          controller.close();
-        });
+      cancel() {
+        nodeStream.destroy();
+
+        fs.unlink(tempPath).catch(() => {});
       },
     });
 
+    await file.close();
+
     return new Response(stream, {
       headers: {
-        "Content-Type": "application/x-ndjson",
+        "Content-Type": "video/mp4",
+        "Content-Length": stat.size.toString(),
+        "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "no-cache",
       },
     });
   } catch (error) {
     console.error(error);
 
-    return NextResponse.json({ message: "Download failed" }, { status: 500 });
+    return NextResponse.json(
+      { message: "Download failed" },
+      { status: 500 }
+    );
   }
 }

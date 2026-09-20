@@ -7,7 +7,6 @@ export default function Home() {
   const [status, setStatus] = useState("Ready");
   const [progress, setProgress] = useState(0);
   const [isConverting, setIsConverting] = useState(false);
-  const [downloadUrl, setDownloadUrl] = useState("");
   const [selectedTool, setSelectedTool] = useState("youtube");
 
   const tools = [
@@ -28,7 +27,9 @@ export default function Home() {
     },
   ];
 
-  const currentTool = tools.find((tool) => tool.id === selectedTool);
+  const currentTool = tools.find(
+    (tool) => tool.id === selectedTool
+  );
 
   const handleConvert = async () => {
     const trimmedUrl = url.trim();
@@ -54,7 +55,6 @@ export default function Home() {
       setIsConverting(true);
       setProgress(0);
       setStatus("Starting...");
-      setDownloadUrl("");
 
       const response = await fetch("/api/convert", {
         method: "POST",
@@ -65,58 +65,76 @@ export default function Home() {
       });
 
       if (!response.ok || !response.body) {
-        throw new Error("Request failed");
+        throw new Error("Download failed");
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
+      const contentLength = response.headers.get("content-length");
+      const total = contentLength
+        ? parseInt(contentLength, 10)
+        : 0;
 
-      let buffer = "";
+      const reader = response.body.getReader();
+
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      setStatus("Downloading video...");
 
       while (true) {
         const { value, done } = await reader.read();
 
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+        if (value) {
+          chunks.push(value);
+          received += value.length;
 
-        const lines = buffer.split("\n");
+          if (total > 0) {
+            const percent = Math.round(
+              (received / total) * 100
+            );
 
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          try {
-            const data = JSON.parse(line);
-
-            if (data.type === "progress") {
-              const percent = Math.round(data.progress);
-
-              setProgress(percent);
-
-              if (percent >= 99) {
-                setStatus("Converting to MP4...");
-              } else {
-                setStatus("Downloading video...");
-              }
-            }
-
-            if (data.type === "complete") {
-              setProgress(100);
-              setStatus("Download ready!");
-              setDownloadUrl(data.downloadUrl);
-            }
-
-            if (data.type === "error") {
-              setStatus(data.message || "Download failed");
-            }
-          } catch {
-            // Ignore incomplete JSON chunks
+            setProgress(Math.min(percent, 100));
           }
         }
       }
-    } catch {
+
+      setStatus("Preparing download...");
+      setProgress(100);
+
+      const blob = new Blob(chunks, {
+        type: "video/mp4",
+      });
+
+      const downloadUrl = URL.createObjectURL(blob);
+
+      const contentDisposition =
+        response.headers.get("content-disposition");
+
+      let fileName = "video.mp4";
+
+      const match = contentDisposition?.match(
+        /filename="(.+)"/
+      );
+
+      if (match) {
+        fileName = match[1];
+      }
+
+      const link = document.createElement("a");
+
+      link.href = downloadUrl;
+      link.download = fileName;
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      URL.revokeObjectURL(downloadUrl);
+
+      setStatus("Download ready!");
+    } catch (error) {
+      console.error(error);
       setStatus("Something went wrong");
     } finally {
       setIsConverting(false);
@@ -126,10 +144,11 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#0a0a0a] text-white">
       <div className="flex min-h-screen flex-col md:flex-row">
-        {/* Sidebar */}
         <aside className="w-full shrink-0 border-b border-zinc-800 bg-zinc-950 p-4 md:w-64 md:border-b-0 md:border-r md:p-5">
           <div>
-            <h1 className="text-xl font-semibold">My Tools</h1>
+            <h1 className="text-xl font-semibold">
+              My Tools
+            </h1>
 
             <p className="mt-1 text-xs text-zinc-500">
               Personal utilities
@@ -160,7 +179,6 @@ export default function Home() {
           </nav>
         </aside>
 
-        {/* Main content */}
         <section className="flex-1 p-5 sm:p-8 md:p-12">
           <div className="mx-auto max-w-3xl">
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -189,10 +207,11 @@ export default function Home() {
                     disabled={isConverting}
                     className="w-full rounded-xl bg-white px-4 py-4 font-medium text-black transition hover:bg-zinc-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {isConverting ? "Converting..." : "Convert"}
+                    {isConverting
+                      ? "Downloading..."
+                      : "Convert"}
                   </button>
 
-                  {/* Status */}
                   <div className="border-t border-zinc-800 pt-6">
                     <div className="flex items-center justify-between">
                       <p className="text-sm text-zinc-500">
@@ -206,33 +225,23 @@ export default function Home() {
                       )}
                     </div>
 
-                    {/* Progress bar */}
                     {(isConverting || progress === 100) && (
                       <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
                         <div
-                          className="h-full rounded-full bg-white transition-all duration-300"
+                          className="h-full rounded-full bg-white transition-all duration-200"
                           style={{
                             width: `${progress}%`,
                           }}
                         />
                       </div>
                     )}
-
-                    {/* Download button */}
-                    {downloadUrl && (
-                      <a
-                        href={downloadUrl}
-                        download
-                        className="mt-4 inline-block rounded-xl bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-zinc-200"
-                      >
-                        Download MP4
-                      </a>
-                    )}
                   </div>
                 </div>
               ) : (
                 <div className="py-12 text-center">
-                  <p className="text-zinc-400">Coming soon</p>
+                  <p className="text-zinc-400">
+                    Coming soon
+                  </p>
                 </div>
               )}
             </div>
