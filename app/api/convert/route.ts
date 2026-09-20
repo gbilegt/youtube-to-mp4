@@ -28,7 +28,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get title + uploader
     const info = await new Promise<{
       title: string;
       uploader: string;
@@ -37,6 +36,8 @@ export async function POST(request: Request) {
         YT_DLP,
         [
           "--no-playlist",
+          "--extractor-args",
+          "youtube:player_client=android",
           "--print",
           "%(uploader)s|||%(title)s",
           url,
@@ -63,7 +64,6 @@ export async function POST(request: Request) {
 
     const fileName = `${artist} - ${title}.mp4`;
 
-    // Temporary directory
     const tempDir = path.join(os.tmpdir(), "youtube-to-mp4");
 
     await fs.mkdir(tempDir, { recursive: true });
@@ -71,12 +71,13 @@ export async function POST(request: Request) {
     const tempName = `${crypto.randomUUID()}.mp4`;
     const tempPath = path.join(tempDir, tempName);
 
-    // Download + merge into temporary file
     await new Promise<void>((resolve, reject) => {
       execFile(
         YT_DLP,
         [
           "--no-playlist",
+          "--extractor-args",
+          "youtube:player_client=android",
           "-f",
           "bestvideo+bestaudio/best",
           "--merge-output-format",
@@ -104,7 +105,6 @@ export async function POST(request: Request) {
       );
     });
 
-    // Stream temporary file to browser
     const file = await fs.open(tempPath, "r");
     const stat = await file.stat();
 
