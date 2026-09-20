@@ -16,6 +16,32 @@ function cleanFileName(name: string) {
     .trim();
 }
 
+function runYtDlp(args: string[], timeout: number) {
+  return new Promise<{ stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      execFile(
+        YT_DLP,
+        args,
+        {
+          timeout,
+          env: {
+            ...process.env,
+            YTDLP_POT_PROVIDER: "http://127.0.0.1:4416",
+          },
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          resolve({ stdout, stderr });
+        }
+      );
+    }
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -28,41 +54,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const info = await new Promise<{
-      title: string;
-      uploader: string;
-    }>((resolve, reject) => {
-      execFile(
-        YT_DLP,
-        [
-          "--no-playlist",
-          "--extractor-args",
-          "youtube:player_client=mweb",
-          "--print",
-          "%(uploader)s|||%(title)s",
-          url,
-        ],
-        { timeout: 30000 },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(new Error(stderr || error.message));
-            return;
-          }
+    const { stdout: infoOutput } = await runYtDlp(
+      [
+        "--no-playlist",
+        "--extractor-args",
+        "youtube:player_client=mweb",
+        "--print",
+        "%(uploader)s|||%(title)s",
+        url,
+      ],
+      30000
+    );
 
-          const [uploader, title] = stdout.trim().split("|||");
+    const [uploader, title] = infoOutput.trim().split("|||");
 
-          resolve({
-            uploader: uploader || "Unknown Artist",
-            title: title || "Unknown Title",
-          });
-        }
-      );
-    });
+    const artist = cleanFileName(uploader || "Unknown Artist");
+    const cleanTitle = cleanFileName(title || "Unknown Title");
 
-    const artist = cleanFileName(info.uploader);
-    const title = cleanFileName(info.title);
-
-    const fileName = `${artist} - ${title}.mp4`;
+    const fileName = `${artist} - ${cleanTitle}.mp4`;
 
     const tempDir = path.join(os.tmpdir(), "youtube-to-mp4");
 
@@ -71,39 +80,25 @@ export async function POST(request: Request) {
     const tempName = `${crypto.randomUUID()}.mp4`;
     const tempPath = path.join(tempDir, tempName);
 
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        YT_DLP,
-        [
-          "--no-playlist",
-          "--extractor-args",
-          "youtube:player_client=mweb",
-          "-f",
-          "bestvideo+bestaudio/best",
-          "--merge-output-format",
-          "mp4",
-          "--ffmpeg-location",
-          FFMPEG,
-          "--newline",
-          "--progress",
-          "-o",
-          tempPath,
-          url,
-        ],
-        { timeout: 300000 },
-        (error, stdout, stderr) => {
-          console.log(stdout);
-
-          if (error) {
-            console.error(stderr);
-            reject(error);
-            return;
-          }
-
-          resolve();
-        }
-      );
-    });
+    await runYtDlp(
+      [
+        "--no-playlist",
+        "--extractor-args",
+        "youtube:player_client=mweb",
+        "-f",
+        "bestvideo+bestaudio/best",
+        "--merge-output-format",
+        "mp4",
+        "--ffmpeg-location",
+        FFMPEG,
+        "--newline",
+        "--progress",
+        "-o",
+        tempPath,
+        url,
+      ],
+      300000
+    );
 
     const file = await fs.open(tempPath, "r");
     const stat = await file.stat();
@@ -158,7 +153,10 @@ export async function POST(request: Request) {
     console.error(error);
 
     return NextResponse.json(
-      { message: "Download failed" },
+      {
+        message:
+          error instanceof Error ? error.message : "Download failed",
+      },
       { status: 500 }
     );
   }
