@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
+import path from "path";
+import fs from "fs/promises";
+import crypto from "crypto";
 
 const YT_DLP =
   "C:\\Users\\jakel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe\\yt-dlp.exe";
+
+const FFMPEG =
+  "C:\\Users\\jakel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-9.0.1-full_build\\bin";
 
 export async function POST(request: Request) {
   try {
@@ -16,31 +22,50 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await new Promise<string>((resolve, reject) => {
+    const downloadDir = path.join(process.cwd(), "public", "downloads");
+
+    await fs.mkdir(downloadDir, { recursive: true });
+
+    const fileName = `${crypto.randomUUID()}.mp4`;
+    const outputPath = path.join(downloadDir, fileName);
+
+    await new Promise<void>((resolve, reject) => {
       execFile(
         YT_DLP,
-        ["--no-playlist", "--print", "%(title)s", url],
-        { timeout: 30000 },
+        [
+          "--no-playlist",
+          "-f",
+          "bestvideo+bestaudio/best",
+          "--merge-output-format",
+          "mp4",
+          "--ffmpeg-location",
+          FFMPEG,
+          "-o",
+          outputPath,
+          url,
+        ],
+        { timeout: 300000 },
         (error, stdout, stderr) => {
           if (error) {
-            reject(new Error(stderr || error.message));
+            console.error(stderr);
+            reject(error);
             return;
           }
 
-          resolve(stdout.trim());
+          resolve();
         }
       );
     });
 
     return NextResponse.json({
-      message: "Video found!",
-      title: result,
+      message: "Download ready!",
+      downloadUrl: `/downloads/${fileName}`,
     });
   } catch (error) {
-    console.error("yt-dlp error:", error);
+    console.error(error);
 
     return NextResponse.json(
-      { message: "Could not fetch video information" },
+      { message: "Download failed" },
       { status: 500 }
     );
   }
